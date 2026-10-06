@@ -725,7 +725,7 @@ with torch.no_grad():
         all_preds.extend(predicted.cpu().numpy())
         all_labels.extend(labels.numpy())
 
-# Saved for plot_pdf.py (confusion matrix / classification report figures)
+# Saved for later analysis (confusion matrix / classification report)
 np.save(os.path.join(config["output_dir"], "test_predictions.npy"), np.array(all_preds))
 np.save(os.path.join(config["output_dir"], "test_labels.npy"), np.array(all_labels))
 

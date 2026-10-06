@@ -48,7 +48,7 @@ Validation images  (--validate)
 Objects
 -------
 EGAD objects converted to USD (default ``data/egad_usd``, override with --usd_dir);
-see classifier/README.md for the download + conversion with obj_2_usd.py.
+see classifier/README.md for the download and conversion to USD.
 
 Usage (from the repository root, or any directory)
 -----

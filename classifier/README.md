@@ -32,7 +32,6 @@ MuJoCo path (mujoco/)                               Isaac Sim path (isaac/)
 3. pca_clustering.py        PCA + K-Means stratification -> cluster label per scene (C0/C1/C2)
 4. preprocessing.py         stratified 70/20/10 train/val/test split + augmentation
 5. training.py              multimodal ResNet + MLP classifier -> best_model.pth + config.json
-6. plot_pdf.py              PDF figures of steps 3-5
 ```
 
 The released weights were trained on data from the **MuJoCo path**. The `config` stored in
@@ -48,16 +47,12 @@ classifier/
 │   ├── randomize_scene.py              1a. scene generation + rendering (MuJoCo)
 │   ├── spatial_features_extraction_raw.py  2. bbox / position features from the images
 │   ├── camera_setup.py                 interactive camera-pose helper
-│   ├── obj_to_xml.py                   cleans per-object MuJoCo XML files (optional)
 │   └── obj_xml/                        base scene XML + its mesh / texture assets
 ├── isaac/
-│   ├── collect_classifier_dataset.py   1b. scene generation + rendering (Isaac Sim)
-│   └── obj_2_usd.py                    EGAD .obj -> .usd converter
+│   └── collect_classifier_dataset.py   1b. scene generation + rendering (Isaac Sim)
 ├── pca_clustering.py                   3. PCA + K-Means
-├── method_comparison.py                3'. compare clustering methods (optional)
 ├── preprocessing.py                    4. dataset split
-├── training.py                         5. classifier training
-└── plot_pdf.py                         6. figures
+└── training.py                         5. classifier training
 ```
 
 The Isaac data-collection environment is in the `clutter_grasp` package:
@@ -75,23 +70,20 @@ data/
     ├── mujoco/           randomize_scene.py + spatial_features_extraction_raw.py outputs
     ├── isaac/            collect_classifier_dataset.py outputs
     ├── pca_kmeans/       pca_clustering.py outputs
-    ├── method_comparison/
     ├── cnn_dataset/      preprocessing.py outputs
-    ├── training/         training.py outputs
-    └── pdf_results/      plot_pdf.py outputs
+    └── training/         training.py outputs
 ```
 
 ## Installation
 
-The MuJoCo path and steps 3-6 need only the packages in `requirements.txt` (tested with Python 3.10):
+The MuJoCo path and steps 3-5 need only the packages in `requirements.txt` (tested with Python 3.10):
 
 ```bash
 pip install -r classifier/requirements.txt
 ```
 
 The Isaac path (`isaac/`) runs in the Isaac Lab environment, with this repository's package installed
-(`pip install -e source/clutter_grasp`). `obj_2_usd.py` also needs `trimesh`, which is installed with
-Isaac Lab.
+(`pip install -e source/clutter_grasp`).
 
 ## EGAD objects (not included)
 
@@ -103,13 +95,9 @@ Download the EGAD object meshes (`.obj`, file names like `A00_0.obj`) from the
 - **Isaac path:** convert the meshes to USD first. The data-collection env reads `data/egad_usd/` by
   default; you can override this with `--usd_dir` or `DataCollectionEnvCfg.object_usd_dir`.
 
-  ```bash
-  ./isaaclab.sh -p classifier/isaac/obj_2_usd.py \
-      --input-folder data/egad_mesh --output-folder data/egad_usd --center --headless
-  ```
-
-  The defaults (scale 0.0006, mass 0.5 kg, convex-hull collision, random colour per object) together
-  with `--center` (mesh centroid at the prim origin) reproduce the USDs used for the released data.
+  Any OBJ → USD converter works, for example Isaac Lab's `scripts/tools/convert_mesh.py`. Keep one
+  `<object_id>.usd` per mesh. The released data used: scale 0.0006, mass 0.5 kg, convex-hull
+  collision, and each mesh re-centred so its vertex centroid is at the prim origin.
 
 EGAD object IDs encode the grasp difficulty (letter A-Y → 1-25) and the shape complexity (number).
 Both data paths parse them from the file name, so keep the original names.
@@ -272,16 +260,6 @@ output, and the default `--output_dir` is `data/classifier/pca_kmeans`.
 - `cnn_dataset.csv` (`image_path`, `cluster`, and 64×64 grayscale pixels)
 - PDF plots
 
-### Comparing clustering methods (optional)
-
-`method_comparison.py` compares K-Means, GMM, DBSCAN, HDBSCAN (needs `hdbscan`), and hierarchical
-clustering on the same PCA space. It scores them with silhouette, Calinski-Harabasz, and
-Davies-Bouldin:
-
-```bash
-python classifier/method_comparison.py --csv_path <features CSV> --n_clusters 3
-```
-
 ## 4. Build the classifier dataset
 
 `preprocessing.py` reads `cnn_dataset.csv` from step 3, drops noise labels (`-1`), and makes a
@@ -346,16 +324,6 @@ To use a newly trained model in the benchmark, copy `best_model.pth` and `config
 `weights/classifier/`. The loader is `clutter_grasp.protocol.classifier.load_classifier_model`.
 It reads `model_name` and `dropout_rate` from `config.json` and the number of classes from the
 checkpoint. It assumes the 6 spatial features above in that order, and class index *k* = `C<k>`.
-
-## 6. Plot results
-
-`plot_pdf.py` collects the PCA/K-Means outputs, training results, and sample images into PDF figures.
-All four directories default to the folders under `data/classifier/` above.
-
-```bash
-python classifier/plot_pdf.py --pca_dir data/classifier/pca_kmeans --cnn_dir data/classifier/training \
-    --data_dir data/classifier/cnn_dataset --out_dir data/classifier/pdf_results
-```
 
 ---
 

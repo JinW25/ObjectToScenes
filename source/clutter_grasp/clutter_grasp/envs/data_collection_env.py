@@ -221,8 +221,8 @@ class DataCollectionEnv(DirectRLEnv):
         if not usd_dir.exists():
             raise FileNotFoundError(
                 f"USD dir not found: {usd_dir}\n"
-                "Download the EGAD meshes from https://dougsm.github.io/egad/ and convert them with "
-                "classifier/isaac/obj_2_usd.py (see classifier/README.md), or set object_usd_dir.")
+                "Download the EGAD meshes from https://dougsm.github.io/egad/ and convert them to USD "
+                "(see classifier/README.md), or set object_usd_dir.")
         for f in sorted(usd_dir.glob("*.usd")):
             self._all_object_infos.append(
                 ObjectSpawnInfo(object_id=f.stem, usd_path=str(f))

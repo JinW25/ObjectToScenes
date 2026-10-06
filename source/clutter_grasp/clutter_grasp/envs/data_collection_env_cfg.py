@@ -21,7 +21,7 @@ from isaaclab.utils import configclass
 from clutter_grasp.paths import DATA_DIR
 
 # EGAD objects converted to USD (not shipped: download the EGAD meshes from
-# https://dougsm.github.io/egad/ and convert them with classifier/isaac/obj_2_usd.py --center).
+# https://dougsm.github.io/egad/ and convert them to USD, see classifier/README.md).
 # Override with DataCollectionEnvCfg.object_usd_dir or --usd_dir in the collector script.
 USD_DIR = str(DATA_DIR / "egad_usd")
 
