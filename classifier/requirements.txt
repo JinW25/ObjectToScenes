@@ -1,0 +1,27 @@
+# Clutter-complexity classifier pipeline (everything except the Isaac Sim data path).
+# Tested with Python 3.10. The Isaac Sim scripts in isaac/ run in the Isaac Lab environment instead.
+
+# MuJoCo data path (mujoco/)
+mujoco==3.1.6
+glfw==2.7.0
+scipy==1.14.1            # camera_setup.py
+
+# Data processing and clustering
+numpy==2.1.3
+pandas==2.2.3
+scikit-learn==1.7.1
+hdbscan==0.8.40          # optional: method_comparison.py
+
+# Images
+opencv-python==4.11.0.86
+pillow==11.3.0
+
+# Deep learning
+torch==2.9.1
+torchvision==0.24.1
+
+# Plotting and utilities
+matplotlib==3.10.3
+seaborn==0.13.2
+tqdm==4.67.1
+pypdf==6.9.0             # optional: merges PDFs in plot_pdf.py

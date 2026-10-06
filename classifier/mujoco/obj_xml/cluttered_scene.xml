@@ -1,0 +1,128 @@
+<mujoco model="cluttered scene">
+
+
+  <compiler angle="radian" meshdir="assets" texturedir="assets" />
+
+  <option iterations="50" timestep="0.001" solver="PGS" cone="elliptic" impratio="10" gravity="0 0 -9.81"/>
+
+  <statistic center="0 0 1.050" extent="0.6"/>
+
+  <visual>
+    <headlight diffuse="0.3 0.3 0.3" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <texture type="2d" name="marble2d" file="marble.png" />
+    <texture type="cube" name="marblecube" file="marble.png" />
+    <texture name="texture:object" file="block.png" gridsize="3 4" gridlayout=".U..LFRB.D.."></texture>
+    <texture name="texture:hidden" file="block_hidden.png" gridsize="3 4" gridlayout=".U..LFRB.D.."></texture>
+    <texture type="2d" file="interbotix_black.png"/>
+    <material name="material:object" texture="texture:object" specular="1" shininess="0.3" reflectance="0"></material>
+    <material name="material:hidden" texture="texture:hidden" specular="1" shininess="0.3" reflectance="0"></material>
+    <material name="material:target" texture="texture:object" specular="1" shininess="0.3" reflectance="0" rgba="1 1 1 0.5"></material>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="table2d" texture="marble2d" reflectance="0.3" rgba="0.8 0.8 0.8 1" />
+    <material name="tablecube" texture="marblecube" rgba="0.8 0.8 0.8 1" />
+    <material name="black" texture="interbotix_black"/>
+    <material name="visualgeom" rgba="0.5 0.9 0.2 1" />
+    <mesh file="vx300s_1_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_2_shoulder.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_3_upper_arm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_4_upper_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_5_lower_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_6_wrist.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_7_gripper.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_8_gripper_prop.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_9_gripper_bar.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_10_gripper_finger.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="right_thumb_1" file="right_thumb_1.STL" />
+    <mesh name="right_thumb_2" file="right_thumb_2.STL" />
+    <mesh name="right_thumb_3" file="right_thumb_3.STL" />
+    <mesh name="right_thumb_4" file="right_thumb_4.STL" />
+    <mesh name="right_index_1" file="right_index_1.STL" />
+    <mesh name="right_index_2" file="right_index_2.STL" />
+    <mesh name="right_middle_1" file="right_middle_1.STL" />
+    <mesh name="right_middle_2" file="right_middle_2.STL" />
+    <mesh name="right_ring_1" file="right_ring_1.STL" />
+    <mesh name="right_ring_2" file="right_ring_2.STL" />
+    <mesh name="right_little_1" file="right_little_1.STL" />
+    <mesh name="right_little_2" file="right_little_2.STL" />
+    <!-- <mesh name="random_obj" file="egad_mesh/X25_1.obj" scale="0.0015 0.0015 0.0015"/> -->
+  </asset>
+
+  <default>
+    <default class="vx300s">
+      <joint limited="true" axis="0 1 0"/>
+      <position forcerange="-35 35"/>
+      <default class="waist">
+        <joint limited="true" axis="0 0 1" range="-3.14158 3.14158" damping="2.86"/>
+        <position ctrlrange="-3.14158 3.14158" kp="25"/>
+      </default>
+      <default class="shoulder">
+        <joint limited="true" range="-1.85005 1.25664" armature="0.004" frictionloss="0.06" damping="6.25"/>
+        <position ctrlrange="-1.85005 1.25664" kp="76" forcerange="-57 57"/>
+      </default>
+      <default class="elbow">
+        <joint limited="true" range="-1.76278 1.6057" armature="0.072" frictionloss="1.74" damping="8.15"/>
+        <position ctrlrange="-1.76278 1.6057" kp="106" forcerange="-25 25"/>
+      </default>
+      <default class="forearm_roll">
+        <joint limited="true" axis="1 0 0" range="-3.14158 3.14158" armature="0.060" damping="3.07"/>
+        <position ctrlrange="-3.14158 3.14158" kp="35" forcerange="-10 10"/>
+      </default>
+      <default class="wrist_angle">
+        <joint limited="true" range="-1.8675 2.23402" damping="1.18"/>
+        <position ctrlrange="-1.8675 2.23402" kp="8"/>
+      </default>
+      <default class="wrist_rotate">
+        <joint limited="true" axis="1 0 0" range="-3.14158 3.14158" damping="0.78"/>
+        <position ctrlrange="-3.14158 3.14158" kp="7"/>
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" density="0" group="2" material="black"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh"/>
+      </default>
+    </default>
+    <joint damping="0.01" armature="0.01" frictionloss="0.01" />
+    <motor ctrllimited="true" />
+    <equality solref="0.001 2" />
+    <default class="visualgeom">
+      <geom material="visualgeom" condim="1" contype="0" conaffinity="0" />
+    </default>
+    <default class="obj_visual">
+      <geom group="2" type="mesh" contype="0" conaffinity="0"/>
+    </default>
+    <default class="obj_collision">
+      <geom group="3" type="mesh"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- ======= TABLE ======= -->
+    <body name="table" pos="0.65 0 0">
+      <!-- <geom size="0.65 0.65 0.025" type="plane" material="table2d" /> -->      <!-- Plane has better contacts -->
+      <geom size="0.85 0.85 0.025" pos="0 0 1" type="box" material="tablecube" />
+      <geom size="0.04 0.5" pos="0.8 0.8 0.524" quat="0 1 0 0" type="cylinder" contype="0" conaffinity="0" />
+      <geom size="0.04 0.5" pos="-0.8 0.8 0.524" quat="0 1 0 0" type="cylinder" contype="0" conaffinity="0" />
+      <geom size="0.04 0.5" pos="0.8 -0.8 0.524" quat="0 1 0 0" type="cylinder" contype="0" conaffinity="0" />
+      <geom size="0.04 0.5" pos="-0.8 -0.8 0.524" quat="0 1 0 0" type="cylinder" contype="0" conaffinity="0" />
+    </body>
+
+    <!-- ======= OBJECT ======= -->
+    <!-- <body name="mesh_object" pos="0.35 0.2 1.25">
+      <joint name="random_obj" type="free" damping="0.01"> </joint>
+      <geom mesh="random_obj" class="obj_visual"/>
+      <geom mesh="random_obj" class="obj_collision"/>
+    </body> -->
+
+  </worldbody>
+</mujoco>

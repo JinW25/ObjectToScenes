@@ -1,0 +1,15 @@
+[package]
+version = "0.1.0"
+category = "isaaclab"
+readme = "README.md"
+title = "Clutter grasping protocol"
+description = "A protocol for evaluating robotic grasping in clutter"
+keywords = ["grasping", "clutter", "benchmark", "isaaclab"]
+
+[dependencies]
+"isaaclab" = {}
+"isaaclab_assets" = {}
+"isaaclab_rl" = {}
+
+[[python.module]]
+name = "clutter_grasp"
