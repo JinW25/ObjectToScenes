@@ -84,7 +84,7 @@ python analyze.py --controller rl=example_data/sim/rl --controller heuristic=exa
 
 ## Command-line options
 
-* `--controller NAME=DIR` (repeatable): a simulated controller and its folder of runs, in plot order. Any name works. The names in the table above come with the paper's labels and colours. Other names are labelled with the name itself and get the next fallback colour.
+* `--controller NAME=DIR` (repeatable): a controller and its folder of JSON results (see "Input format"), in plot order. Any name works. The names in the table above come with the paper's labels and colours. Other names are labelled with the name itself and get the next fallback colour.
 * `--label NAME=TEXT` and `--color NAME=#RRGGBB`: override a display label or colour. This also works for the real-world series, named `real_experiment`.
 * `--reference NAME` (default: the first `--controller`): the controller whose ranking is shown and whose isolated time is the gap baseline.
 * `--csv FILE`: the real-world `clutter_compile.csv`. Giving it enables the real-world figures.
@@ -94,6 +94,10 @@ python analyze.py --controller rl=example_data/sim/rl --controller heuristic=exa
 * `--outlier_z 3.5`: threshold of the trial outlier filter. `0` disables the filter.
 * `--top_n_shortest 3`: the number of fastest real-world picks kept per (object, clutter level). `0` keeps all picks.
 * `--prefix single`: the prefix of the run-folder names.
+* `--cost KEY`, `--all_trials`, `--cost_label TEXT`: the cost functional and its axis label (see "Using your own cost, objects and controllers").
+* `--objects OBJ ...`: restrict the analysis to this object set.
+* `--object_difficulty CSV`: per-object difficulty (`object,difficulty`) for the GLM's object-difficulty term.
+* `--csv_object_col`, `--csv_level_col`, `--csv_cost_col`: column names of the `--csv` log.
 
 ## Metric definitions
 
@@ -131,36 +135,64 @@ The gap is measured in seconds against the reference controller's own isolated t
 * In the figure, whiskers show the 95% CI (±1.96 SE). A faded bar means p ≥ 0.05. Stars mark p < .05 (\*), < .01 (\*\*) and < .001 (\*\*\*).
 * The real-world data are not in this figure, because 5 objects are too few for the difficulty terms.
 
-## Input layout
+## Input format
 
-```
-<controller_dir>/
-  single_<OBJECT>_<YYYYMMDD>_<HHMMSS>/results/results.json            # isolated (ε0)
-  single_<OBJECT>_C0_easy_<YYYYMMDD>_<HHMMSS>/results/results.json    # E1
-  single_<OBJECT>_C1_medium_<YYYYMMDD>_<HHMMSS>/results/results.json  # E2
-  single_<OBJECT>_C2_hard_<YYYYMMDD>_<HHMMSS>/results/results.json    # E3
-```
-
-* Object names may contain underscores.
-* Folders whose names do not match this pattern are ignored.
-* If an (object, condition) pair appears twice, the later timestamp wins.
-* `analyze.py` skips objects that have no isolated run.
-
-The fields read from `results.json` are listed below. All other fields, such as `chaos_metrics` and `steps`, are ignored.
+Each controller is a folder of JSON results files, one file per (object, condition), in any
+sub-folder layout. This is all the analysis needs, so results from any simulator or a real robot
+can be analysed. A minimal file:
 
 ```jsonc
 {
-  "overall_statistics": {          // or "overall_stats"; optional
-    "success_rate": 0.98,          // fraction in [0, 1]; computed from trials if absent
-    "total_trials": 100
-  },
-  "trial_results": [               // if absent, results/trial_results.json is read instead
-    {"success": true,  "picking_time": 7.08},   // seconds; a missing "success" counts as true
-    {"success": false, "picking_time": 30.0}
+  "target_object": "mug",          // object o_i (any name)
+  "condition": "E2",               // clutter level: isolated|E0|0, C0_easy|E1|1, C1_medium|E2|2, C2_hard|E3|3
+  "trial_results": [               // one entry per trial
+    {"success": true,  "picking_time": 7.08},   // cost C(tau): picking_time by default, or your --cost field
+    {"success": false, "picking_time": 30.0}    // a missing "success" counts as true
   ]
 }
 ```
 
-The picking time is the first finite value among `picking_time`, `time_to_success`, `time`, `duration`, `elapsed_time` and `pick_time`.
+* `target_complexity` is accepted instead of `condition` (as written by this repository's runners).
+  A missing or empty condition means isolated.
+* `overall_statistics.success_rate` (a fraction in [0, 1]) is used for the success rate if present;
+  otherwise it is computed from the trials.
+* Every object needs an isolated run (that is its baseline `D_{i,0}`). Objects without one are skipped.
+* If an (object, condition) pair appears twice, the later file in sorted path order wins.
+* JSON files without `trial_results` are ignored. If `target_object` is missing, the object and
+  condition are taken from this repository's run-folder name,
+  `single_<OBJECT>[_<C0_easy|C1_medium|C2_hard>]_<YYYYMMDD>_<HHMMSS>/results/results.json`.
 
-`clutter_compile.csv` needs these columns: `obj_name`, `clutter_level` (0 to 3) and `object_execute_s`.
+The default cost is the first finite value among `picking_time`, `time_to_success`, `time`,
+`duration`, `elapsed_time`, `pick_time` and `cost`.
+
+`--csv` (the real-world log) is one row per object pick. The default columns are those of the paper's
+`clutter_compile.csv`: `obj_name`, `clutter_level` (0-3, E0-E3 or condition names) and
+`object_execute_s` (cost). For other column names, use `--csv_object_col`, `--csv_level_col` and
+`--csv_cost_col`. A real-robot experiment can also be saved as JSON files and passed as a `--controller`.
+
+## Using your own cost, objects and controllers
+
+The protocol defines the difficulty `D_{i,s}` of object `o_i` at clutter level `s` as the expected
+task cost `C(tau)` of a fixed reference policy, and the adaptation gap of a new policy as
+`A_{i,s} = D_{i,s}^pi - D_{i,0}^*`. Every part of that maps to an option, and the defaults
+reproduce the paper:
+
+| Protocol element | Option | Paper default |
+|---|---|---|
+| Cost functional `C(tau)` | `--cost KEY` (any numeric per-trial field), `--all_trials` (count failed trials too), `--cost_label` (axis label) | `picking_time`, successful trials only |
+| Object set `O` | `--objects OBJ ...` | every object with an isolated run |
+| Reference policy `pi*` (gives `D_{i,0}^*`) | `--reference NAME` | first `--controller` |
+| Policies `pi` to compare | `--controller NAME=DIR` (repeatable), `--label`, `--color` | the 5 paper controllers |
+| Object difficulty in the regression | `--object_difficulty difficulty.csv` (columns `object,difficulty`) | alphabetical rank of EGAD names |
+
+Example: energy as the cost, your own objects and two policies.
+
+```bash
+python analyze.py \
+    --controller my_probe=results/my_probe --controller my_policy=results/my_policy \
+    --reference my_probe --cost energy_J --all_trials --cost_label "Energy (J)" \
+    --objects mug drill banana --object_difficulty my_difficulty.csv \
+    --output_dir my_figs
+```
+
+The script stops with a message naming your trials' fields if it finds no usable cost.

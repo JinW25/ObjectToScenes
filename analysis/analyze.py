@@ -43,7 +43,16 @@ from scipy import stats
 import common as C
 
 REAL = "real_experiment"
-CLUTTER_TO_COND = dict(enumerate(C.CONDITIONS))  # 0 -> isolated, 1 -> C0_easy, ...
+
+# Axis labels; --cost_label replaces the cost name (defaults are the paper's labels).
+LABEL_GAP = r"Picking Time Gap $A_{i,s}^{\pi}$ (s)"
+LABEL_D = r"Time to Successful Grasp $D_{i,s}$"
+
+
+def set_cost_label(cost_label: str):
+    global LABEL_GAP, LABEL_D
+    LABEL_GAP = cost_label + r" Gap $A_{i,s}^{\pi}$"
+    LABEL_D = cost_label + r" $D_{i,s}$"
 
 # ---------------------------------------------------------------------------
 # Simulated results: per-object metrics
@@ -61,7 +70,7 @@ def object_metrics(runs: dict, outlier_z: float) -> pd.DataFrame:
         row = {"object": obj}
         for cond in C.CONDITIONS:
             data = runs[obj].get(cond)
-            times = C.mad_filter(C.successful_times(data["trial_results"]), outlier_z) if data else np.array([])
+            times = C.mad_filter(C.trial_costs(data["trial_results"]), outlier_z) if data else np.array([])
             row[f"D_{cond}"] = float(np.nanmean(times)) if times.size else np.nan
             row[f"D_std_{cond}"] = float(np.nanstd(times)) if times.size >= 2 else np.nan
             row[f"N_{cond}"] = int(times.size)
@@ -239,7 +248,7 @@ def plot_absolute_gap_violin(gaps: pd.DataFrame, ctrls: list, styles: dict, sr_p
     ax.axhline(0, color="black", linewidth=0.9, linestyle="--", alpha=0.6)
     ax.set_xticks(centres)
     ax.set_xticklabels([C.COND_LABEL[c] for c in C.CONDITIONS], rotation=20, ha="right", fontsize=C.FONT_SIZE_TICK)
-    ax.set_ylabel(r"Picking Time Gap $A_{i,s}^{\pi}$ (s)", fontweight="bold", fontsize=C.FONT_SIZE_LABEL)
+    ax.set_ylabel(LABEL_GAP, fontweight="bold", fontsize=C.FONT_SIZE_LABEL)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
     ax.set_xlim(centres[0] - span, centres[-1] + span)
     plt.tight_layout(pad=C.TIGHT_PAD)
@@ -272,17 +281,22 @@ def plot_absolute_gap_violin(gaps: pd.DataFrame, ctrls: list, styles: dict, sr_p
 # ---------------------------------------------------------------------------
 # Real-world results: loading and per-object summaries
 # ---------------------------------------------------------------------------
-def load_realworld_csv(path, top_n_shortest) -> pd.DataFrame:
-    """clutter_compile.csv -> (object, condition, time) rows.
+def load_realworld_csv(path, top_n_shortest, object_col="obj_name", level_col="clutter_level",
+                       cost_col="object_execute_s") -> pd.DataFrame:
+    """Real-world log (one row per object pick) -> (object, condition, time) rows.
 
-    If top_n_shortest is set, only the N fastest picks of each
-    (object, clutter level) are kept (the paper uses N = 3).
+    Columns default to the paper's clutter_compile.csv; the level column may use
+    0-3, E0-E3 or the condition names. If top_n_shortest is set, only the N
+    lowest-cost picks of each (object, clutter level) are kept (the paper uses N = 3).
     """
     df = pd.read_csv(path)
-    df["condition"] = df["clutter_level"].map(CLUTTER_TO_COND)
+    missing = [c for c in (object_col, level_col, cost_col) if c not in df.columns]
+    if missing:
+        raise SystemExit(f"{path}: missing column(s) {missing}; set --csv_object_col / --csv_level_col / --csv_cost_col")
+    df["condition"] = df[level_col].map(C.normalize_condition)
     df = df[df["condition"].notna()].copy()
-    df["object"] = df["obj_name"].astype(str)
-    df["time"] = pd.to_numeric(df["object_execute_s"], errors="coerce")
+    df["object"] = df[object_col].astype(str)
+    df["time"] = pd.to_numeric(df[cost_col], errors="coerce")
     df = df.dropna(subset=["time"])[["object", "condition", "time"]].reset_index(drop=True)
     if top_n_shortest:
         df = (df.sort_values("time").groupby(["object", "condition"], group_keys=False)
@@ -315,17 +329,24 @@ TERM_LABEL = {"clutter_complexity": "Clutter severity", "grasp_difficulty": "Gra
               "clutter_x_grasp": "Clutter x grasp difficulty\n(interaction)"}
 
 
-def glm_design(trials: pd.DataFrame, z: float):
+def glm_design(trials: pd.DataFrame, z: float, difficulty: dict = None):
     """Trial-level design matrix for the grasp-score GLM.
 
     grasp_score   = picking time of one successful trial (after the MAD filter)
     clutter       = 0 (isolated), 1 (E1), 2 (E2), 3 (E3)
-    grasp_difficulty = the object's 1-based rank in alphabetical order of the
-                    object names (objects are named so that this order is the
-                    designed difficulty order, e.g. A24_0 < B25_3 < ...)
+    grasp_difficulty = the object's value in ``difficulty`` (--object_difficulty CSV);
+                    by default its 1-based rank in alphabetical order of the
+                    object names (EGAD names sort in their designed difficulty
+                    order, e.g. A24_0 < B25_3 < ...)
     """
     objs = sorted(trials["object"].unique())
-    rank = {o: i + 1 for i, o in enumerate(objs)}
+    if difficulty:
+        missing = [o for o in objs if o not in difficulty]
+        if missing:
+            raise SystemExit(f"--object_difficulty has no value for {missing}")
+        rank = {o: float(difficulty[o]) for o in objs}
+    else:
+        rank = {o: i + 1 for i, o in enumerate(objs)}
     clutter, diff, y = [], [], []
     for obj in objs:
         for k, cond in enumerate(C.CONDITIONS):
@@ -435,7 +456,7 @@ def plot_time_trend_overlay(summ: pd.DataFrame, line_ctrls, styles, thumb_dir, p
             ax.fill_between(x[ok], lo, hi, color=C.COND_COLOR[cond], alpha=0.12, linewidth=0)
             band += [lo, hi]
     ax.set_xlabel(r"Objects $O_i$", fontweight="bold", fontsize=11)
-    ax.set_ylabel(r"Time to Successful Grasp $D_{i,s}$" + " — Simulated", fontweight="bold", fontsize=11)
+    ax.set_ylabel(LABEL_D + " — Simulated", fontweight="bold", fontsize=11)
     ax.yaxis.set_label_coords(-0.075, 0.38)
     ax.set_xticks(x)
     ax.set_xticklabels([C.short_label(o) for o in objects], fontsize=8.5)
@@ -463,7 +484,7 @@ def plot_time_trend_overlay(summ: pd.DataFrame, line_ctrls, styles, thumb_dir, p
         yl = auto_ylim([rband])
         if yl is not None:
             ax2.set_ylim(yl[0], yl[0] + (yl[1] - yl[0]) * head)
-        ax2.set_ylabel(r"Time to Successful Grasp $D_{i,s}$" + " — Real-World", fontweight="bold",
+        ax2.set_ylabel(LABEL_D + " — Real-World", fontweight="bold",
                        fontsize=11, color=rcolor)
         ax2.yaxis.set_label_coords(1.075, 0.38)
         ax2.tick_params(axis="y", labelcolor=rcolor, labelsize=8.5)
@@ -560,6 +581,15 @@ def plot_coefficient_grid(coefs: pd.DataFrame, ctrls, styles, path: Path):
 def run_sim(runs: dict, ref: str, styles: dict, args, out: Path):
     """Figures 1-2 from the simulated controllers."""
     metrics = {name: object_metrics(r, args.outlier_z) for name, r in runs.items()}
+    for name, m in metrics.items():
+        if m.empty or not np.isfinite(m["D_isolated"].values).any():
+            trial = next((t for conds in runs[name].values() for d in conds.values()
+                          for t in d.get("trial_results", []) if t), {})
+            raise SystemExit(
+                f"{name}: no usable isolated-condition costs. Every object needs an isolated run, and each "
+                f"trial needs a numeric cost field (looked for {[C.COST_KEY] if C.COST_KEY else list(C.TIME_KEYS)}"
+                f"{'' if C.ALL_TRIALS else ' in successful trials'}). A trial in this folder has keys "
+                f"{sorted(trial)}; set --cost KEY (and --all_trials if the cost applies to failed trials).")
     pd.concat(metrics, names=["controller"]).to_csv(out / "object_metrics.csv")
     rt = ranking_table(metrics[ref])
     rt.to_csv(out / f"ranking_heatmap_{ref}.csv", index=False)
@@ -575,7 +605,10 @@ def run_sim(runs: dict, ref: str, styles: dict, args, out: Path):
 def run_realworld(runs: dict, styles: dict, args, out: Path):
     """Figures 3-4: real-world trends (+ simulated --trend lines) and the per-controller GLM."""
     trials = {name: C.trials_table(r) for name, r in runs.items()}
-    real = load_realworld_csv(args.csv, args.top_n_shortest or None)
+    real = load_realworld_csv(args.csv, args.top_n_shortest or None,
+                              args.csv_object_col, args.csv_level_col, args.csv_cost_col)
+    if args.objects:
+        real = real[real["object"].isin(args.objects)].reset_index(drop=True)
     print(f"Real-world: {len(real)} picks, objects {sorted(real['object'].unique())}")
 
     # Figure 3: per-object trends (each controller on its own full object set)
@@ -591,7 +624,7 @@ def run_realworld(runs: dict, styles: dict, args, out: Path):
         return
     rows = []
     for c, tr in trials.items():
-        X, y, n_obj = glm_design(tr, args.outlier_z)
+        X, y, n_obj = glm_design(tr, args.outlier_z, args.difficulty)
         fit = fit_gamma_log_glm(X, y)
         for i, term in enumerate(TERMS[1:], start=1):
             rows.append(dict(controller=c, controller_label=styles[c]["label"], term=term, coef=fit["coef"][i],
@@ -623,6 +656,22 @@ def main():
     ap.add_argument("--top_n_shortest", type=int, default=3,
                     help="Keep the N fastest real-world picks per (object, level); 0 keeps all (default 3).")
     ap.add_argument("--thumbnail_dir", default=None, help="Optional folder of <object>.pdf images (needs PyMuPDF).")
+    g = ap.add_argument_group("protocol settings for your own data (defaults reproduce the paper)")
+    g.add_argument("--cost", default=None, metavar="KEY",
+                   help="Per-trial cost field C(tau) in trial_results (default: picking_time).")
+    g.add_argument("--all_trials", action="store_true",
+                   help="Average the cost over all trials, not only successful ones (e.g. for energy).")
+    g.add_argument("--cost_label", default=None, metavar="TEXT",
+                   help="Name of the cost in axis labels, e.g. 'Energy (J)' (default: picking-time labels).")
+    g.add_argument("--objects", nargs="+", default=None, metavar="OBJ",
+                   help="Object set O to analyse (default: every object with an isolated run).")
+    g.add_argument("--object_difficulty", default=None, metavar="CSV",
+                   help="CSV with columns object,difficulty for the GLM's object-difficulty term "
+                        "(default: alphabetical rank of the object names, as for EGAD).")
+    g.add_argument("--csv_object_col", default="obj_name", help="Object column of --csv (default obj_name).")
+    g.add_argument("--csv_level_col", default="clutter_level",
+                   help="Clutter-level column of --csv: 0-3, E0-E3 or condition names (default clutter_level).")
+    g.add_argument("--csv_cost_col", default="object_execute_s", help="Cost column of --csv (default object_execute_s).")
     ap.add_argument("--output_dir", required=True)
     args = ap.parse_args()
 
@@ -642,10 +691,21 @@ def main():
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     C.apply_paper_style()
+    C.COST_KEY, C.ALL_TRIALS = args.cost, args.all_trials
+    if args.cost_label:
+        set_cost_label(args.cost_label)
+    args.difficulty = None
+    if args.object_difficulty:
+        dt = pd.read_csv(args.object_difficulty)
+        args.difficulty = dict(zip(dt["object"].astype(str), dt["difficulty"]))
 
     runs = {}
     for name, d in dirs.items():
         runs[name] = C.load_runs(d, args.prefix)
+        if args.objects:
+            runs[name] = {o: r for o, r in runs[name].items() if o in set(args.objects)}
+            if not runs[name]:
+                raise SystemExit(f"{name}: none of --objects {args.objects} found in {d}")
         print(f"Loaded {name}: {len(runs[name])} objects from {d}")
     if runs:
         run_sim(runs, ref, styles, args, out)

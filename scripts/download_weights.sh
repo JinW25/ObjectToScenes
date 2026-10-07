@@ -2,15 +2,17 @@
 # Download model weights into weights/ (not tracked in git).
 #
 #   weights/classifier/      clutter-level classifier (best_model.pth, config.json)   [this repo's release]
-#   weights/ppo_policies/    per-object PPO policies for the Contactile hand          [this repo's release]
+#   weights/ppo_policies/    per-object PPO policies, trained in isolation (rl)         [this repo's release]
+#   weights/ppo_clutter_policies/  per-object PPO policies, trained in clutter (rl_clutter) [this repo's release]
+#   weights/transformer/     distilled transformers (transformer, distilled)            [this repo's release]
 #   weights/ggcnn/           GG-CNN trained on Cornell (Panda baseline grasp pose)    [dougsm/ggcnn release]
 #   weights/sam/             Segment Anything ViT-B (Panda baseline target masks)     [Meta AI]
 #
-# Usage:  bash scripts/download_weights.sh [classifier] [ppo] [ggcnn] [sam]   (default: all)
+# Usage:  bash scripts/download_weights.sh [classifier] [ppo] [ppo_clutter] [transformer] [ggcnn] [sam]   (default: all)
 
 set -euo pipefail
 
-RELEASE_URL="https://github.com/JinW25/ObjectToScenes_EvaluateGraspInCluttered/releases/download/v1.0"
+RELEASE_URL="https://github.com/JinW25/ObjectToScenes/releases/download/v1.0"
 GGCNN_URL="https://github.com/dougsm/ggcnn/releases/download/v0.1/ggcnn_weights_cornell.zip"
 SAM_URL="https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
 
@@ -32,6 +34,12 @@ if want classifier "$@"; then
 fi
 if want ppo "$@"; then
     fetch "${RELEASE_URL}/ppo_policies.zip" ppo_policies.zip && unzip -q -o ppo_policies.zip && rm ppo_policies.zip
+fi
+if want ppo_clutter "$@"; then
+    fetch "${RELEASE_URL}/ppo_clutter_policies.zip" ppo_clutter_policies.zip && unzip -q -o ppo_clutter_policies.zip && rm ppo_clutter_policies.zip
+fi
+if want transformer "$@"; then
+    fetch "${RELEASE_URL}/transformer.zip" transformer.zip && unzip -q -o transformer.zip && rm transformer.zip
 fi
 if want ggcnn "$@"; then
     mkdir -p ggcnn

@@ -7,21 +7,24 @@ This module has three parts:
 
 Metric definitions (used by analyze.py)
 -------------------------------------------------------------------------
-* Picking time of a trial: the trial's ``picking_time`` (seconds). Only
-  successful trials count. A trial with no ``success`` key is treated as
-  successful.
+* Cost of a trial, C(tau): by default the trial's picking time
+  (``picking_time``, seconds; see ``trial_cost`` for the accepted key names
+  and ``--cost`` to use any other numeric per-trial field such as energy).
+  By default only successful trials count (time-to-success); a trial with no
+  ``success`` key is treated as successful. ``--all_trials`` counts every trial.
 * Trial outlier filter: for each (controller, object, condition) cell, a
   picking time is dropped when its robust z-score
   ``0.6745 * |t - median| / MAD`` exceeds 3.5 (MAD = median absolute
   deviation). Cells with fewer than 4 times, or with MAD == 0, are left as-is.
-* D_{i,s}: the mean picking time of object i in condition s, after the
-  outlier filter ("time to successful grasp").
+* D_{i,s}: the mean cost of object i in condition s, after the outlier
+  filter (with the default cost: "time to successful grasp").
 * Success rate SR_{i,s}: ``success_rate`` from the run's summary block
   (``overall_statistics`` or ``overall_stats``). If that is missing, it is the
   fraction of trials with ``success == True``.
 """
 import json
 import logging
+import re
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -62,6 +65,27 @@ def apply_paper_style():
 # ---------------------------------------------------------------------------
 CLUTTER_LEVELS = ["C0_easy", "C1_medium", "C2_hard"]
 CONDITIONS = ["isolated"] + CLUTTER_LEVELS
+
+# Accepted spellings of each condition in results files (E_s notation of the paper, 0-3, names).
+_COND_ALIASES = {
+    "isolated": ["isolated", "baseline", "e0", "0", "none", ""],
+    "C0_easy": ["c0_easy", "c0", "e1", "1", "easy"],
+    "C1_medium": ["c1_medium", "c1", "e2", "2", "medium"],
+    "C2_hard": ["c2_hard", "c2", "e3", "3", "hard"],
+}
+COND_ALIAS = {alias: cond for cond, aliases in _COND_ALIASES.items() for alias in aliases}
+
+
+def normalize_condition(value) -> Optional[str]:
+    """Map a condition written as 'C1_medium', 'E2', 2, 'medium', ... to its canonical name.
+
+    None and '' mean the isolated baseline. Unknown values return None.
+    """
+    if value is None:
+        return "isolated"
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return COND_ALIAS.get(str(value).strip().lower())
 COND_LABEL = {
     "isolated": r"$\epsilon_0$ (Baseline)",
     "C0_easy": r"$\mathcal{E}_1$ (Easy)",
@@ -115,9 +139,11 @@ def build_styles(names: List[str], labels: Dict[str, str], colors: Dict[str, str
 
 
 def short_label(obj: str) -> str:
-    """Objects are named <letter><...>; figures print only the leading letter."""
+    """Tick label of an object: EGAD names (e.g. 'A24_0') print only their letter, others in full."""
     s = str(obj)
-    return s[0] if s else "?"
+    if re.fullmatch(r"[A-Y]\d{2}_\d+", s):
+        return s[0]
+    return s if s else "?"
 
 
 # ---------------------------------------------------------------------------
@@ -138,39 +164,79 @@ def parse_run_dir(name: str, prefix: str = "single") -> Optional[Tuple[str, str]
     return (obj, cond) if obj else None
 
 
-def load_runs(base_dir, prefix: str = "single") -> Dict[str, Dict[str, dict]]:
-    """Read every run folder under base_dir into {object: {condition: results.json dict}}.
+def run_identity(data: dict, path: Path, prefix: str = "single") -> Optional[Tuple[str, str]]:
+    """(object, condition) of one results file.
 
-    Folders are read in sorted order, so if an (object, condition) pair was
-    run twice, the later timestamp wins. If results.json has no
-    ``trial_results`` list, a sibling ``trial_results.json`` is used instead.
+    Read from the JSON first: ``target_object`` (or ``object``) and ``condition``
+    (or ``target_complexity``; missing/empty = isolated). Falls back to the run
+    folder name '<prefix>_<object>[_<level>]_<date>_<time>' used by this repository.
+    """
+    obj = data.get("target_object", data.get("object"))
+    if obj:
+        raw = data["condition"] if "condition" in data else data.get("target_complexity")
+        cond = normalize_condition(raw)
+        if cond is None:
+            print(f"[WARN] {path}: unknown condition {raw!r}, skipped")
+            return None
+        return str(obj), cond
+    for folder in (path.parent.parent, path.parent):
+        parsed = parse_run_dir(folder.name, prefix)
+        if parsed:
+            return parsed
+    return None
+
+
+def load_runs(base_dir, prefix: str = "single") -> Dict[str, Dict[str, dict]]:
+    """Read every results file under base_dir into {object: {condition: results dict}}.
+
+    Any ``*.json`` (searched recursively) that is a dict with a ``trial_results``
+    list and an identifiable object/condition (see ``run_identity``) is a run;
+    other JSON files are ignored. This repository writes
+    ``<run folder>/results/results.json``; if such a file has no
+    ``trial_results`` list, the sibling ``trial_results.json`` is used.
+    Files are read in sorted path order, so if an (object, condition) pair
+    appears twice, the later one wins.
     """
     base_dir = Path(base_dir)
     if not base_dir.is_dir():
         raise SystemExit(f"Controller directory not found: {base_dir}")
     runs: Dict[str, Dict[str, dict]] = {}
-    for run_dir in sorted(d for d in base_dir.iterdir() if d.is_dir()):
-        parsed = parse_run_dir(run_dir.name, prefix)
-        res_file = run_dir / "results" / "results.json"
-        if parsed is None or not res_file.exists():
+    for res_file in sorted(base_dir.rglob("*.json")):
+        if res_file.name == "trial_results.json":
+            continue  # companion of results.json, read below when needed
+        try:
+            data = json.loads(res_file.read_text())
+        except (json.JSONDecodeError, UnicodeDecodeError):
             continue
-        data = json.loads(res_file.read_text())
+        if not isinstance(data, dict):
+            continue
         if not isinstance(data.get("trial_results"), list):
-            tr_file = run_dir / "results" / "trial_results.json"
-            tr = json.loads(tr_file.read_text()) if tr_file.exists() else []
+            tr_file = res_file.parent / "trial_results.json"
+            if res_file.name != "results.json" or not tr_file.exists():
+                continue
+            tr = json.loads(tr_file.read_text())
             if isinstance(tr, dict):
                 tr = tr.get("trial_results", [])
             data["trial_results"] = tr if isinstance(tr, list) else []
-        obj, cond = parsed
+        ident = run_identity(data, res_file, prefix)
+        if ident is None:
+            continue
+        obj, cond = ident
         runs.setdefault(obj, {})[cond] = data
     if not runs:
-        raise SystemExit(f"No '{prefix}_<object>[_<condition>]_<date>_<time>/results/results.json' runs in {base_dir}")
+        raise SystemExit(f"No results files (JSON with target_object, condition and trial_results) in {base_dir}")
     return runs
 
 
-def trial_time(trial: dict) -> Optional[float]:
-    """Picking time of one trial (first finite value among the known key names)."""
-    for k in ("picking_time", "time_to_success", "time", "duration", "elapsed_time", "pick_time"):
+# Cost settings, set once by analyze.py from --cost / --all_trials.
+COST_KEY: Optional[str] = None     # None = picking time (first of TIME_KEYS present)
+ALL_TRIALS: bool = False           # False = successful trials only
+TIME_KEYS = ("picking_time", "time_to_success", "time", "duration", "elapsed_time", "pick_time", "cost")
+
+
+def trial_cost(trial: dict) -> Optional[float]:
+    """Cost C(tau) of one trial: the --cost field, or else the first finite value among TIME_KEYS."""
+    for k in ((COST_KEY,) if COST_KEY else TIME_KEYS):
         try:
             v = float(trial[k])
         except (KeyError, TypeError, ValueError):
@@ -180,16 +246,22 @@ def trial_time(trial: dict) -> Optional[float]:
     return None
 
 
-def successful_times(trials: list) -> List[float]:
-    """Picking times of successful trials (a trial without a 'success' key counts as successful)."""
+def trial_costs(trials: list) -> List[float]:
+    """Costs of the trials that count: successful ones (a trial without 'success' counts as
+    successful), or every trial with --all_trials."""
     out = []
     for t in trials or []:
-        if "success" in t and not t.get("success", False):
+        if not ALL_TRIALS and "success" in t and not t.get("success", False):
             continue
-        v = trial_time(t)
+        v = trial_cost(t)
         if v is not None:
             out.append(v)
     return out
+
+
+# Names used before the cost was made configurable.
+trial_time = trial_cost
+successful_times = trial_costs
 
 
 def mad_filter(values, z: float = 3.5) -> np.ndarray:
@@ -222,9 +294,9 @@ def success_rate(data: dict) -> float:
 
 
 def trials_table(runs: Dict[str, Dict[str, dict]]) -> pd.DataFrame:
-    """One row per successful trial: object, condition, time (no outlier filtering yet)."""
+    """One row per counted trial: object, condition, time (= cost; no outlier filtering yet)."""
     rows = [(obj, cond, v) for obj, conds in runs.items() for cond, data in conds.items()
-            for v in successful_times(data.get("trial_results"))]
+            for v in trial_costs(data.get("trial_results"))]
     return pd.DataFrame(rows, columns=["object", "condition", "time"])
 
 

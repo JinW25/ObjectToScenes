@@ -10,9 +10,12 @@ One run = one object in one condition (isolated, C0_easy, C1_medium or C2_hard),
 --num_trials trials. Cluttered scenes are generated from the protocol's clutter levels and
 confirmed by the clutter classifier before the trials start (and again at every respawn).
 
-Controller:
-  * default: the per-object PPO policy from <trained_policies_dir>/<object>/model.zip
-  * --controller my_pkg.my_module:make_controller   use your own controller (see README.md)
+Controller (--policy, names as in the paper and analysis/):
+  rl           per-object PPO policies trained in isolation (reference)   weights/ppo_policies/
+  rl_clutter   per-object PPO policies trained in clutter                weights/ppo_clutter_policies/
+  transformer  one transformer distilled from the rl policies            weights/transformer/distillation/
+  distilled    one transformer distilled from the rl_clutter policies    weights/transformer/cluttered_distillation/
+  --controller my_pkg.my_module:make_controller   your own controller (see README.md)
 
 Results: results/benchmark/<controller>/single_<object>[_<condition>]_<timestamp>/results/results.json
 """
@@ -48,8 +51,18 @@ parser.add_argument("--max_steps_per_trial", type=int, default=200,
                    help="Max steps per trial before hand respawn")
 parser.add_argument("--max_attempts", type=int, default=100,
                    help="Max drop attempts before giving up")
-parser.add_argument("--trained_policies_dir", type=str, default=str(WEIGHTS_DIR / "ppo_policies"),
-                   help="Per-object PPO policies: <dir>/<object>/model.zip (+ model_vecnormalize.pkl)")
+POLICIES = {
+    # name: (per-object PPO dir or None, transformer checkpoint dir or None)
+    "rl": (WEIGHTS_DIR / "ppo_policies", None),
+    "rl_clutter": (WEIGHTS_DIR / "ppo_clutter_policies", None),
+    "transformer": (None, WEIGHTS_DIR / "transformer" / "distillation"),
+    "distilled": (None, WEIGHTS_DIR / "transformer" / "cluttered_distillation"),
+}
+parser.add_argument("--policy", type=str, default="rl", choices=list(POLICIES),
+                   help="Released controller to run (default: rl). Ignored with --controller.")
+parser.add_argument("--trained_policies_dir", type=str, default=None,
+                   help="Per-object PPO policies: <dir>/<object>/model.zip (+ model_vecnormalize.pkl). "
+                        "Default: the --policy's folder.")
 parser.add_argument("--classifier_model_dir", type=str, default=str(WEIGHTS_DIR / "classifier"),
                    help="Clutter classifier (best_model.pth + config.json)")
 parser.add_argument("--controller", type=str, default="",
@@ -57,6 +70,19 @@ parser.add_argument("--controller", type=str, default="",
                         "factory(env) must return an object with act(obs) -> actions.")
 parser.add_argument("--controller_name", type=str, default="",
                    help="Name used for the results folder (default: 'ppo' or the factory name)")
+# ── Distilled transformer (same flags as the original runner; --policy transformer/distilled set them) ──
+parser.add_argument("--use_transformer", action="store_true",
+                   help="Use a distilled transformer instead of per-object PPO")
+parser.add_argument("--transformer_checkpoint", type=str, default=None,
+                   help="best_model.pth from distillation (default: the --policy's checkpoint)")
+parser.add_argument("--transformer_obs_norm_stats", type=str, default=None,
+                   help="obs_norm_stats.npz from distillation (default: next to the checkpoint)")
+parser.add_argument("--transformer_d_model",            type=int, default=None)
+parser.add_argument("--transformer_nhead",              type=int, default=None)
+parser.add_argument("--transformer_num_layers",         type=int, default=None)
+parser.add_argument("--transformer_dim_feedforward",    type=int, default=None)
+parser.add_argument("--transformer_num_proprio_tokens", type=int, default=None,
+                   help="Architecture overrides; default: config.json next to the checkpoint")
 parser.add_argument("--video", action="store_true",
                    help="Record video")
 parser.add_argument("--video_length", type=int, default=100000,
@@ -64,6 +90,28 @@ parser.add_argument("--video_length", type=int, default=100000,
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
+# Resolve the controller before the simulator starts, so bad paths fail fast.
+_ppo_dir, _tf_dir = POLICIES[args_cli.policy]
+if _tf_dir is not None or args_cli.transformer_checkpoint or args_cli.transformer_obs_norm_stats:
+    args_cli.use_transformer = True
+if args_cli.use_transformer and _tf_dir is None:
+    _tf_dir = POLICIES["transformer"][1]
+    if args_cli.policy == "rl":
+        args_cli.policy = "transformer"
+if args_cli.controller:
+    args_cli.use_transformer = False
+elif args_cli.use_transformer:
+    args_cli.transformer_checkpoint = args_cli.transformer_checkpoint or str(_tf_dir / "best_model.pth")
+    for f in [args_cli.transformer_checkpoint, args_cli.transformer_obs_norm_stats]:
+        if f and not Path(f).exists():
+            parser.error(f"{f} not found (run scripts/download_weights.sh transformer)")
+else:
+    args_cli.trained_policies_dir = args_cli.trained_policies_dir or str(_ppo_dir)
+    if not Path(args_cli.trained_policies_dir).is_dir():
+        parser.error(f"{args_cli.trained_policies_dir} not found (run scripts/download_weights.sh)")
+if args_cli.trained_policies_dir is None:
+    args_cli.trained_policies_dir = str(POLICIES["rl"][0])  # only used to list objects
 
 # Cameras are needed for video and for the clutter classifier.
 if args_cli.video or args_cli.target_complexity:
@@ -88,6 +136,7 @@ from isaaclab_rl.sb3 import Sb3VecEnvWrapper
 
 import clutter_grasp.envs  # noqa: F401  (registers the gym environments)
 from clutter_grasp.envs.benchmark_env_cfg import BenchmarkEnvCfg
+from clutter_grasp.controllers.transformer_controller import TransformerController
 from clutter_grasp.protocol.clutter_levels import (
     CLUTTER_CONFIGS,
     NEIGHBOR_RADIUS as RADIUS,
@@ -582,9 +631,13 @@ def run_single_object_experiment(args):
     print("\n" + "="*80)
     print("SINGLE OBJECT PICKING EXPERIMENT")
     print("="*80)
-    controller_name = args.controller_name or (args.controller.rpartition(":")[2] if args.controller else "ppo")
+    controller_name = args.controller_name or (args.controller.rpartition(":")[2] if args.controller else args.policy)
     print(f"Target Object:    {args.target_object}")
-    print(f"Controller:       {controller_name}" + ("" if args.controller else " (per-object)"))
+    print(f"Controller:       {controller_name}")
+    if args.use_transformer:
+        print(f"  Checkpoint:     {args.transformer_checkpoint}")
+    elif not args.controller:
+        print(f"  Policies dir:   {args.trained_policies_dir}")
     if args.target_complexity:
         print(f"Target Complexity: {args.target_complexity}")
         config = CLUTTER_CONFIGS[args.target_complexity]
@@ -618,7 +671,7 @@ def run_single_object_experiment(args):
     env_cfg.trained_policies_dir = args.trained_policies_dir
     env_cfg.max_drop_attempts   = args.max_attempts
     env_cfg.enable_timeout      = False
-    env_cfg.external_controller = bool(args.controller)
+    env_cfg.external_controller = bool(args.controller) or args.use_transformer
 
     # Complexity / clutter config
     if args.target_complexity:
@@ -711,6 +764,13 @@ def run_single_object_experiment(args):
     if args.controller:
         controller = load_external_controller(args.controller, unwrapped_env)
         print(f"\n[CONTROLLER] Using external controller: {args.controller}")
+    elif args.use_transformer:
+        controller = TransformerController(
+            unwrapped_env, args.transformer_checkpoint, args.transformer_obs_norm_stats,
+            d_model=args.transformer_d_model, nhead=args.transformer_nhead,
+            num_layers=args.transformer_num_layers, dim_feedforward=args.transformer_dim_feedforward,
+            num_proprio_tokens=args.transformer_num_proprio_tokens,
+        )
     else:
         # Per-object PPO: the env loaded <trained_policies_dir>/<object>/model.zip.
         policy = unwrapped_env.get_current_policy()
@@ -925,9 +985,10 @@ def run_single_object_experiment(args):
         "target_object":        args.target_object,
         "controller":           controller_name,
         "controller_spec":      args.controller or None,
+        "transformer_checkpoint": args.transformer_checkpoint if args.use_transformer else None,
         "target_complexity":    args.target_complexity,
         "num_clutter":          args.num_clutter if not args.target_complexity else len(unwrapped_env.objects) - 1,
-        "trained_policies_dir": None if args.controller else args.trained_policies_dir,
+        "trained_policies_dir": None if (args.controller or args.use_transformer) else args.trained_policies_dir,
         "classifier_model_dir": args.classifier_model_dir if args.target_complexity else None,
         "max_attempts":         args.max_attempts,
         "video_enabled":        args.video,

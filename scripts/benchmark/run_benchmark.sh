@@ -3,7 +3,8 @@
 # for every object, isolated + C0_easy + C1_medium + C2_hard, NUM_TRIALS trials each.
 #
 # Usage (inside the Isaac Lab container, from anywhere):
-#   bash scripts/benchmark/run_benchmark.sh                               # per-object PPO, all objects
+#   bash scripts/benchmark/run_benchmark.sh                               # per-object PPO (rl), all objects
+#   bash scripts/benchmark/run_benchmark.sh --policy distilled            # rl | rl_clutter | transformer | distilled
 #   bash scripts/benchmark/run_benchmark.sh --objects "A24_0 D25_3" --num_trials 10
 #   bash scripts/benchmark/run_benchmark.sh --controller my_pkg.ctrl:make_controller --controller_name mine
 #   bash scripts/benchmark/run_benchmark.sh --yes                         # no confirmation prompts
@@ -21,7 +22,8 @@ NUM_TRIALS=100
 OBJECTS=""
 CONTROLLER=""
 CONTROLLER_NAME=""
-TRAINED_POLICIES_DIR="${WEIGHTS_DIR}/ppo_policies"
+POLICY="rl"
+TRAINED_POLICIES_DIR=""
 CLASSIFIER_MODEL_DIR="${WEIGHTS_DIR}/classifier"
 CONDITIONS=(isolated C0_easy C1_medium C2_hard)
 ASSUME_YES=false
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
         --num_trials)            NUM_TRIALS="$2"; shift 2 ;;
         --objects)               OBJECTS="$2"; shift 2 ;;
         --conditions)            read -r -a CONDITIONS <<< "$2"; shift 2 ;;
+        --policy)                POLICY="$2"; shift 2 ;;
         --controller)            CONTROLLER="$2"; shift 2 ;;
         --controller_name)       CONTROLLER_NAME="$2"; shift 2 ;;
         --trained_policies_dir)  TRAINED_POLICIES_DIR="$2"; shift 2 ;;
@@ -42,9 +45,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Object list: PPO policies available, or every object USD for an external controller ──
+case "${POLICY}" in
+    rl)          DEFAULT_POLICIES_DIR="${WEIGHTS_DIR}/ppo_policies" ;;
+    rl_clutter)  DEFAULT_POLICIES_DIR="${WEIGHTS_DIR}/ppo_clutter_policies" ;;
+    transformer|distilled) DEFAULT_POLICIES_DIR="" ;;
+    *) echo "Unknown --policy ${POLICY} (rl, rl_clutter, transformer, distilled)"; exit 1 ;;
+esac
+TRAINED_POLICIES_DIR="${TRAINED_POLICIES_DIR:-${DEFAULT_POLICIES_DIR}}"
+
+# ── Object list: PPO policies available, or every object USD for a transformer / external controller ──
 if [ -z "${OBJECTS}" ]; then
-    if [ -n "${CONTROLLER}" ]; then
+    if [ -n "${CONTROLLER}" ] || [ -z "${TRAINED_POLICIES_DIR}" ]; then
         OBJECTS=$(ls -1 "${OBJECTS_DIR}" | sed 's/\.usd$//')
     else
         if [ ! -d "${TRAINED_POLICIES_DIR}" ]; then
@@ -57,7 +68,7 @@ fi
 OBJECTS=(${OBJECTS})
 
 LABEL="${CONTROLLER_NAME:-${CONTROLLER:+${CONTROLLER##*:}}}"
-LABEL="${LABEL:-ppo}"
+LABEL="${LABEL:-${POLICY}}"
 LOG_DIR="${RESULTS_DIR}/benchmark/${LABEL}/logs"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -74,7 +85,8 @@ if [ "${ASSUME_YES}" != true ]; then
 fi
 mkdir -p "${LOG_DIR}"
 
-EXTRA_ARGS=(--trained_policies_dir "${TRAINED_POLICIES_DIR}" --classifier_model_dir "${CLASSIFIER_MODEL_DIR}")
+EXTRA_ARGS=(--policy "${POLICY}" --classifier_model_dir "${CLASSIFIER_MODEL_DIR}")
+[ -n "${TRAINED_POLICIES_DIR}" ] && EXTRA_ARGS+=(--trained_policies_dir "${TRAINED_POLICIES_DIR}")
 [ -n "${CONTROLLER}" ] && EXTRA_ARGS+=(--controller "${CONTROLLER}")
 [ -n "${CONTROLLER_NAME}" ] && EXTRA_ARGS+=(--controller_name "${CONTROLLER_NAME}")
 
